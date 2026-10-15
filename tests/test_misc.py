@@ -46,3 +46,61 @@ def test_text_command(tmp_path, capsys):
     assert e.value.code == 0
     out = json.loads(capsys.readouterr().out)
     assert out["chunk_count"] > 1 and not out["text"].startswith("[00:00]")
+
+
+class FakeClock:
+    def __init__(self):
+        self.t = 0.0
+
+    def now(self):
+        return self.t
+
+    def sleep(self, s):
+        self.t += s
+
+
+def _prefs(**kw):
+    return {"proxy_url": "http://127.0.0.1:9", "proxy_upstream": "socks5://x", **kw}
+
+
+def test_proxy_ok_first_try():
+    from watchless import proxy
+    r = proxy.ensure(_prefs(), _probe=lambda u, t: (True, "HTTP 204"), _forwarder=lambda u, up: "up")
+    assert r["status"] == "ok" and r["probe_attempts"] == 1 and not r["warmed_up"]
+
+
+def test_proxy_warmup_runs_up_command_and_polls():
+    from watchless import proxy
+    clock, calls = FakeClock(), {"probe": 0, "up": 0, "fwd": 0}
+
+    def probe(u, t):
+        calls["probe"] += 1
+        assert t <= 4  # short probes only
+        clock.t += t / 4
+        return (calls["probe"] >= 4, "HTTP 204" if calls["probe"] >= 4 else "timeout")
+
+    def fwd(u, up):
+        calls["fwd"] += 1
+        return "started" if calls["fwd"] == 1 else "up"
+
+    def up(cmd):
+        calls["up"] += 1
+        return "exit 0"
+    r = proxy.ensure(_prefs(proxy_up_command="up.sh"), _probe=probe, _forwarder=fwd, _up=up,
+                     _sleep=clock.sleep, _now=clock.now)
+    assert r["status"] == "ok" and r["warmed_up"] and calls["up"] == 1 and r["probe_attempts"] == 4
+    assert r["forwarder"] == "started" and r["up_command"] == "exit 0"
+
+
+def test_proxy_gives_up_within_deadline():
+    import pytest
+    from watchless import proxy
+    clock = FakeClock()
+
+    def probe(u, t):
+        clock.t += t
+        return False, "timeout"
+    with pytest.raises(proxy.ProxyError) as e:
+        proxy.ensure(_prefs(), wait_seconds=20, _probe=probe, _forwarder=lambda u, up: "up",
+                     _sleep=clock.sleep, _now=clock.now)
+    assert clock.t < 30 and "warm-up" in str(e.value)
