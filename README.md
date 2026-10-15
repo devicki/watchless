@@ -1,5 +1,7 @@
 # Watchless
 
+> Engine for the Watchless Grok Bot template.
+
 **Watch less, know more.** Watchless turns a video (a YouTube or other yt-dlp-supported link, or a local file) into clean, timestamped text that people and AI agents can read: `transcript.json` + `transcript.md`.
 
 It is the engine behind the *Watchless* Grok Bot template (quick summaries from a link, study notes, agent-friendly markdown, emotional-arc analysis, translate-then-summarize). The CLI itself only fetches and normalizes; summarizing is done by the agent.
