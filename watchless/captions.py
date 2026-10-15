@@ -22,14 +22,102 @@ def _clean_tracks(d: dict | None) -> dict:
     return {k: v for k, v in (d or {}).items() if v and k not in ("live_chat", "rechat")}
 
 
-def original_language(info: dict) -> str:
-    """Best guess of the spoken language: yt-dlp 'language', else the auto '*-orig' track."""
-    if info.get("language"):
-        return base_lang(info["language"])
-    for k in _clean_tracks(info.get("automatic_captions")):
+# Place/name hints commonly found in titles (e.g. "TEDxKyoto") and tags. Small and generic on purpose.
+_PLACE_HINTS = {
+    "ja": ["kyoto", "tokyo", "osaka", "nagoya", "sapporo", "fukuoka", "kobe", "yokohama", "hiroshima", "sendai",
+           "okinawa", "japan", "japanese", "nihon", "日本"],
+    "ko": ["seoul", "busan", "incheon", "daegu", "daejeon", "gwangju", "korea", "korean", "한국"],
+    "zh": ["beijing", "shanghai", "shenzhen", "guangzhou", "taipei", "chinese", "mandarin", "中文"],
+    "fr": ["paris", "lyon", "marseille", "toulouse", "bordeaux", "french", "français"],
+    "es": ["madrid", "barcelona", "sevilla", "valencia", "spanish", "español"],
+    "de": ["berlin", "munich", "münchen", "hamburg", "wien", "german", "deutsch"],
+}
+_MANY_AUTO = 20  # more auto tracks than this means YouTube's translation list, not real ASR tracks
+
+
+def script_language(text: str) -> dict:
+    """Score languages by writing system. Hangul -> ko, kana -> ja; Han-only is ambiguous (ja/zh)."""
+    if not text:
+        return {}
+    hangul = sum("\uac00" <= ch <= "\ud7a3" or "\u1100" <= ch <= "\u11ff" for ch in text)
+    kana = sum("\u3040" <= ch <= "\u30ff" for ch in text)
+    han = sum("\u4e00" <= ch <= "\u9fff" for ch in text)
+    thai = sum("\u0e00" <= ch <= "\u0e7f" for ch in text)
+    cyr = sum("\u0400" <= ch <= "\u04ff" for ch in text)
+    out = {}
+    if hangul >= 2:
+        out["ko"] = 4
+    if kana >= 2:
+        out["ja"] = 4
+    elif han >= 2 and not hangul:
+        out["ja"] = out.get("ja", 0) + 1
+        out["zh"] = out.get("zh", 0) + 1
+    if thai >= 2:
+        out["th"] = 4
+    if cyr >= 3:
+        out["ru"] = 2
+    return out
+
+
+def infer_language(info: dict) -> dict:
+    """Infer the spoken language from evidence and compare with metadata.
+
+    Strongest signal: the auto-caption '*-orig' track (YouTube's ASR of the actual audio).
+    Then the writing system of title/description, place/language hints in title/tags/channel,
+    real (non-translation) auto tracks, manual tracks, and finally yt-dlp's metadata 'language'.
+    Returns {language, metadata_language, scores, evidence, mismatch}.
+    """
+    scores: dict[str, float] = {}
+    evidence: list[str] = []
+
+    def add(lang, pts, why):
+        if lang:
+            scores[lang] = scores.get(lang, 0) + pts
+            evidence.append(f"{lang}+{pts:g}: {why}")
+
+    manual = _clean_tracks(info.get("subtitles"))
+    auto = _clean_tracks(info.get("automatic_captions"))
+    for k in auto:
         if k.endswith("-orig"):
-            return base_lang(k)
-    return ""
+            add(base_lang(k), 10, f"auto-caption original track {k}")
+    if len(auto) <= _MANY_AUTO:
+        for k in auto:
+            if not k.endswith("-orig"):
+                add(base_lang(k), 1, f"auto track {k}")
+    title, desc = info.get("title") or "", (info.get("description") or "")[:1000]
+    for lang, pts in script_language(title).items():
+        add(lang, pts, "title script")
+    for lang, pts in script_language(desc).items():
+        add(lang, min(pts, 2), "description script")
+    hay = " ".join([title, info.get("channel") or "", info.get("uploader") or "",
+                    " ".join(info.get("tags") or [])]).lower()
+    for lang, words in _PLACE_HINTS.items():
+        hits = [w for w in words if re.search(r"(?<![a-z])" + re.escape(w) + r"(?![a-z])", hay)
+                or ("tedx" + w) in hay.replace(" ", "")]
+        if hits:
+            add(lang, min(3 + len(hits) - 1, 5), "title/tag/channel hints: " + ", ".join(hits[:3]))
+    for k in manual:
+        add(base_lang(k), 1, f"manual track {k}")
+    meta = base_lang(info.get("language")) or None
+    if meta:
+        add(meta, 3, "metadata language")
+    if not scores:
+        return {"language": None, "metadata_language": meta, "scores": {}, "evidence": [], "mismatch": False}
+    best = max(sorted(scores), key=lambda k: scores[k])
+    # evidence excluding the metadata vote must be strong to override metadata
+    if meta and best != meta and scores[best] - (scores.get(meta, 0) - 3) < 4:
+        best = meta
+    if scores[best] < 2 and not meta:  # e.g. only one manual track: too weak to call
+        best_lang = None
+    else:
+        best_lang = best
+    return {"language": best_lang, "metadata_language": meta, "scores": scores, "evidence": evidence,
+            "mismatch": bool(meta and best_lang and best_lang != meta)}
+
+
+def original_language(info: dict) -> str:
+    """Best guess of the spoken language (see infer_language)."""
+    return infer_language(info)["language"] or ""
 
 
 def _pick(tracks: dict, lang: str) -> str | None:
@@ -51,8 +139,14 @@ def select_track(info: dict, user_lang: str = "en", want: str = "auto") -> dict 
     """
     manual = _clean_tracks(info.get("subtitles"))
     auto = _clean_tracks(info.get("automatic_captions"))
-    orig = original_language(info)
+    inferred = infer_language(info)
+    orig = inferred["language"] or ""
     user = base_lang(user_lang) or "en"
+    warnings = []
+    if inferred["mismatch"]:
+        warnings.append(f"metadata_language_mismatch: metadata says '{inferred['metadata_language']}', "
+                        f"evidence says '{orig}' ({'; '.join(inferred['evidence'][:4])}). Using '{orig}'; "
+                        "pass --lang to override.")
 
     def res(key, kind, why):
         lang = base_lang(key)
@@ -60,7 +154,8 @@ def select_track(info: dict, user_lang: str = "en", want: str = "auto") -> dict 
         if kind == "auto" and orig and lang != orig:
             source = "auto-translated"
         return {"key": key, "language": lang, "kind": kind, "source": source,
-                "confidence": CONFIDENCE[source], "reason": why, "original_language": orig or None}
+                "confidence": CONFIDENCE[source], "reason": why, "original_language": orig or None,
+                "language_evidence": inferred["evidence"][:8], "warnings": warnings}
 
     if want and want != "auto":
         w = base_lang(want)

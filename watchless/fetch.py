@@ -224,7 +224,7 @@ def fetch(source: str, prefs: dict, lang: str = "auto", audio_fallback: str | No
             start_clip = end_clip = None
 
     segments = cap.clip(segments, start_clip, end_clip)
-    warnings = []
+    warnings = list((track or {}).pop("warnings", []) or [])
     if not segments:
         warnings.append("no_speech: the transcript is empty (music-only or silent video?). "
                         "Try `watchless frames` for visual content.")

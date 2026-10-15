@@ -139,3 +139,59 @@ def test_strip_credits():
     assert [s["text"] for s in c.strip_credits(segs)] == ["Hear that?"]
     j = [{"start": 0, "end": 1, "text": "翻訳: Hiroko Kawano 校正: Kyoko Kamura 皆さん"}]
     assert c.strip_credits(j)[0]["text"] == "皆さん"
+
+
+def _vm7(language="fr"):
+    """Mocked TEDxKyoto info (VM7Zk_J6gfQ): English title, metadata language fr, manual fr+ja."""
+    return {"title": "Traditional Japanese dyes on the path to eco-friendly fashion | Toru Arakawa | TEDxKyoto",
+            "channel": "TEDx Talks", "language": language,
+            "tags": ["Japan", "Culture", "tedx", "Japanese", "Design"],
+            "description": "This talk was given at a local TEDx event...",
+            "subtitles": {"fr": T, "ja": T}, "automatic_captions": {"fr": T, "ja": T}}
+
+
+def test_metadata_mismatch_trusts_evidence():
+    t = c.select_track(_vm7("fr"), "ko")
+    assert t["key"] == "ja" and t["source"] == "manual"
+    assert any(w.startswith("metadata_language_mismatch") for w in t["warnings"])
+
+
+def test_vm7_without_metadata_language():
+    t = c.select_track(_vm7(None), "ko")
+    assert t["key"] == "ja" and t["warnings"] == []
+
+
+def test_orig_track_beats_metadata_and_hints():
+    i = {"title": "東京の旅 | TEDxTokyo", "language": "en", "subtitles": {"en": T, "ja": T},
+         "automatic_captions": {"ko-orig": T, **{f"x{n}": T for n in range(40)}}}
+    inf = c.infer_language(i)
+    assert inf["language"] == "ko" and inf["mismatch"]
+
+
+def test_weak_hint_does_not_override_metadata():
+    i = {"title": "My weekend in Tokyo", "language": "en", "subtitles": {"en": T, "ja": T}, "automatic_captions": {}}
+    assert c.infer_language(i)["language"] == "en"
+    assert c.select_track(i, "ko")["key"] == "en"
+
+
+def test_script_detection():
+    assert c.script_language("안녕하세요 여러분")["ko"] == 4
+    assert c.script_language("こんにちは世界")["ja"] == 4
+    s = c.script_language("北京大学")
+    assert s["ja"] == s["zh"] == 1
+    assert c.infer_language({"title": "인생을 바꾸는 글쓰기", "subtitles": {"en": T, "ko": T}})["language"] == "ko"
+
+
+def test_translation_list_not_counted_as_evidence():
+    auto = {f"l{n}": T for n in range(50)}
+    auto["fr"] = T
+    inf = c.infer_language({"title": "x", "language": None, "automatic_captions": auto})
+    assert inf["language"] is None
+
+
+def test_multiple_orig_tracks_resolved_by_other_evidence():
+    # dubbed/multi-audio videos expose several '*-orig' tracks; script + metadata break the tie
+    i = {"title": "삶의 주도권을 놓치게 되는 실수 | 세바시", "language": "ko", "subtitles": {},
+         "automatic_captions": {"en-orig": T, "id-orig": T, "ko-orig": T, **{f"x{n}": T for n in range(40)}}}
+    t = c.select_track(i, "en")
+    assert t["key"] == "ko-orig" and t["warnings"] == []
