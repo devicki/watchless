@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "lang": "en",
+  "default_mode": "quick",
+  "length": "medium",
+  "asr": {"enabled": true, "model": "small", "policy": "ask"},
+  "frames_detail": "transcript",
+  "proxy_url": "",
+  "proxy_up_command": "",
+  "proxy_upstream": "",
+  "cookies_file": "",
+  "output_dir": "~/watchless-out"
+}
