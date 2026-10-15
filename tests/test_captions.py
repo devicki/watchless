@@ -131,3 +131,11 @@ def test_paragraphs_cjk_join():
     segs = [{"start": 0, "end": 2, "text": "今日は晴れです。"}, {"start": 2, "end": 4, "text": "明日は雨"},
             {"start": 4, "end": 6, "text": "でしょう"}]
     assert c.paragraphs(segs)[0]["text"] == "今日は晴れです。明日は雨 でしょう"
+
+
+def test_strip_credits():
+    segs = [{"start": 0, "end": 1, "text": "Translator: Gustavo Rocha Reviewer: Ariana Bleau"},
+            {"start": 1, "end": 2, "text": "Hear that?"}]
+    assert [s["text"] for s in c.strip_credits(segs)] == ["Hear that?"]
+    j = [{"start": 0, "end": 1, "text": "翻訳: Hiroko Kawano 校正: Kyoko Kamura 皆さん"}]
+    assert c.strip_credits(j)[0]["text"] == "皆さん"

@@ -177,8 +177,30 @@ def dedupe_cues(cues: list[dict]) -> list[dict]:
     return out
 
 
+_CREDIT = re.compile(r"^\s*(?:(?:translator|reviewer|transcriber|翻訳|校正|번역|검토|자막)\s*[:：]\s*"
+                     r"\S+(?:\s\S+)?\s*)+", re.I)
+
+
+_LABEL = re.compile(r"(?:translator|reviewer|transcriber|翻訳|校正|번역|검토|자막)\s*[:：]", re.I)
+
+
+def strip_credits(segments: list[dict]) -> list[dict]:
+    """Remove subtitle translator/reviewer credits (common on TED captions) from the first segments."""
+    out = []
+    for i, s in enumerate(segments):
+        if i < 3 and _CREDIT.match(s["text"]):
+            names_only = _LABEL.sub(" ", s["text"])
+            t = "" if re.fullmatch(r"[A-Za-z .'\-]*", names_only) and not re.search(r"[?!.。]", names_only) \
+                else _CREDIT.sub("", s["text"]).strip()
+            if not t:
+                continue
+            s = {**s, "text": t}
+        out.append(s)
+    return out
+
+
 def parse_subtitles(text: str) -> list[dict]:
-    return dedupe_cues(parse_cues(text))
+    return strip_credits(dedupe_cues(parse_cues(text)))
 
 
 def clip(segments: list[dict], start: float | None, end: float | None) -> list[dict]:
