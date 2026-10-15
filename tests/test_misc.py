@@ -34,3 +34,15 @@ def test_prefs_roundtrip(tmp_path, monkeypatch):
 def test_proxy_not_configured():
     from watchless import proxy
     assert proxy.ensure({"proxy_url": ""})["status"] == "not configured"
+
+
+def test_text_command(tmp_path, capsys):
+    import pytest
+    from watchless import cli
+    segs = [{"start": i * 10, "end": i * 10 + 9, "text": f"line {i}."} for i in range(30)]
+    (tmp_path / "transcript.json").write_text(json.dumps({"segments": segs, "track": {"source": "manual"}}))
+    with pytest.raises(SystemExit) as e:
+        cli.main(["text", str(tmp_path), "--chunk", "1", "--max-chars", "100"])
+    assert e.value.code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["chunk_count"] > 1 and not out["text"].startswith("[00:00]")

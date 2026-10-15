@@ -154,7 +154,13 @@ def fetch(source: str, prefs: dict, lang: str = "auto", audio_fallback: str | No
             sec = cap.user_lang_track(info, user_lang, track)
             if sec:
                 try:
-                    f2 = download_track(prefs, source, d, sec)
+                    try:
+                        f2 = download_track(prefs, source, d, sec)
+                    except FetchError as e:  # translated tracks are often throttled; retry once
+                        if e.code != "rate_limited":
+                            raise
+                        time.sleep(6)
+                        f2 = download_track(prefs, source, d, sec)
                     sec_segs = cap.clip(cap.parse_subtitles(f2.read_text(errors="ignore")), start, end)
                     secondary = {**sec, "file": f2.name, "segment_count": len(sec_segs)}
                     (d / f"transcript.{sec['language']}.json").write_text(

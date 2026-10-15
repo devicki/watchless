@@ -145,6 +145,32 @@ def cmd_frames(a):
         out({"ok": False, "error": code, "message": str(e)[:400]}, 2)
 
 
+def cmd_text(a):
+    """Print transcript text (whole or one chunk) as compact timestamped lines, for reading in pieces."""
+    from watchless import captions as cap
+    p = Path(a.path).expanduser()
+    if p.is_dir():
+        p = p / (f"transcript.{a.lang}.json" if a.lang else "transcript.json")
+    if not p.exists():
+        out({"ok": False, "error": "not_found", "message": f"{p} not found; run `watchless fetch` first."}, 2)
+    data = json.loads(p.read_text())
+    segs = data.get("segments", [])
+    chunks = data.get("chunks") or cap.chunk(segs, a.max_chars)
+    if a.max_chars and data.get("chunks") and a.max_chars != 12000:
+        chunks = cap.chunk(segs, a.max_chars)
+    sel = segs
+    if a.chunk is not None:
+        if not 0 <= a.chunk < len(chunks):
+            out({"ok": False, "error": "bad_chunk", "message": f"chunk must be 0..{len(chunks) - 1}"}, 2)
+        c = chunks[a.chunk]
+        sel = [s for s in segs if c["start"] <= s["start"] <= c["end"]]
+    paras = cap.paragraphs(sel, max_seconds=a.para_seconds)
+    track = data.get("track") or {}
+    out({"ok": True, "source": track.get("source"), "confidence": track.get("confidence"),
+         "language": track.get("language"), "chunk": a.chunk, "chunk_count": len(chunks),
+         "text": "\n".join(f"[{cap.fmt_ts(x['start'])}] {x['text']}" for x in paras)})
+
+
 def cmd_prefs(a):
     pr = P.load()
     if a.set:
@@ -194,6 +220,13 @@ def main(argv=None):
     fr.add_argument("--start")
     fr.add_argument("--end")
     fr.set_defaults(fn=cmd_frames)
+    tx = sub.add_parser("text", help="print transcript text (optionally one chunk) from a fetch output")
+    tx.add_argument("path", help="output dir or transcript.json")
+    tx.add_argument("--chunk", type=int)
+    tx.add_argument("--lang", help="read the secondary transcript.<lang>.json instead")
+    tx.add_argument("--max-chars", type=int, default=12000)
+    tx.add_argument("--para-seconds", type=float, default=45)
+    tx.set_defaults(fn=cmd_text)
     pp = sub.add_parser("prefs", help="show or set prefs (key=value, dotted keys)")
     pp.add_argument("--set", nargs="*")
     pp.set_defaults(fn=cmd_prefs)

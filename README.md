@@ -32,6 +32,7 @@ watchless doctor [--youtube]                          # tools, prefs, proxy, opt
 watchless fetch <url|file> [--lang auto|en|ko|ja...] [--audio-fallback ask|auto|never] [--start 1:00 --end 5:00]
 watchless transcribe <file> [--model small|medium] [--lang ko] [--out result.json]
 watchless frames <url|file> --detail transcript|efficient|balanced [--start --end]
+watchless text <output_dir> [--chunk N] [--lang ko]          # read the transcript one chunk at a time
 watchless prefs [--set lang=ko asr.model=medium]
 ```
 
